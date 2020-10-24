@@ -1,0 +1,700 @@
+---
+title: "Final Machine Learning Project \n Murders by gender analysis in México 2015-2018 "
+author: "Carlos Baltazar"
+date: "22/10/2020"
+output: 
+  pdf_document:
+    df_print: kable
+    fig_crop: no
+    number_sections: true
+    toc: true
+    toc_depth: 3
+  urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+```{r, echo= FALSE}
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("knitr", repos = "http://cran.us.r-project.org")
+
+library(tidyverse)
+library(caret)
+library(data.table)
+library(knitr)
+```
+
+\newpage
+# **Introduction**
+In the most recent years, homicides in Mexico have increased due various factors. War against drug cartels has influenced heavily in the rise of violence in all the country, but femicide has been in the public eye in the past few years.
+
+A femicide can be defined as an “intentional murder of women because they are women, by a man motivated by hatred, contempt, pleasure or a sense of ownership of women.” For many years, this crimes were labeled as "passion crimes", diminishing the systematic abuse over women.
+
+Women collectives have been fighting to address this problem and change laws to guarantee their safety and punish this hate crime. Nevertheless, people in charge of making this changes keeps devaluating or diverting the problem. Even public opinion has sayings like "more men are killed than women", [here one example.](https://www.forbes.com.mx/los-hombres-causan-y-son-las-victimas-mas-comunes-de-delitos-en-mexico/)
+
+In this context, this work is conducted to explore the various variables in the murders on Mexican population to explore if there is any difference between genders. Using Data Analysis techniques and Machine Learning algorithms to define if any variables have more weight to predict the sex of the victim.
+
+Notice that the source of the data is in spanish, but through the document, the key words will be translated. 
+
+# **Data Analysis**
+The data used is the official reported by the National Institute of Statistics and Geography (INEGI by its name in Spanish, Instituto Nacional de Estadística y Geografía). These data sets can be consulted [here.](https://www.inegi.org.mx/programas/mortalidad/default.html#Datos_abiertos)
+
+With a quick glance, we notice that there are 59 variables in the data:
+
+```{r, echo= FALSE}
+dl <- tempfile()
+#------------------------------------------ 2015 ------------------------------------------
+download.file("https://www.inegi.org.mx/contenidos/programas/mortalidad/datosabiertos/defunciones/2015/defunciones_base_datos_2015_csv.zip", dl)
+
+data <- read.csv(unzip(dl, files = "conjunto_de_datos/defunciones_generales_2015.csv"))
+```
+
+```{r}
+names(data)
+```
+
+The first step is to select only the data that we will use:
+  
+* State where the murder occurred
+* Cause of death
+* Classification of death
+* Victim's sex
+* Age
+* Day occurred
+* Month occurred
+* Year occurred
+* Civil status
+* Place where it happened
+* Family violence
+* Scholarship
+* Relationship with aggressor
+
+```{r}
+cols <- c("ent_ocurr", "causa_def", "lista_mex", "sexo", "edad", "dia_ocurr", "mes_ocurr",
+          "anio_ocur", "edo_civil",  "lugar_ocur", "vio_fami", "escolarida", "par_agre")
+```
+
+The downloaded the data contains all the deaths in Mexico from years 2015-2018, which is the latest year available, binded into one data frame.
+
+```{r echo=FALSE}
+data <- data %>%  select(cols)
+#------------------------------------------ 2016 ------------------------------------------
+download.file("https://www.inegi.org.mx/contenidos/programas/mortalidad/datosabiertos/defunciones/2016/defunciones_base_datos_2016_csv.zip", dl)
+
+data_temp <- read.csv(unzip(dl, files = "conjunto_de_datos/defunciones_generales_2016.csv")) %>% 
+  select(cols)
+
+data <- rbind(data, data_temp)
+#------------------------------------------ 2017 ------------------------------------------
+download.file("https://www.inegi.org.mx/contenidos/programas/mortalidad/datosabiertos/defunciones/2017/conjunto_de_datos_defunciones_generales_2017_csv.zip", dl)
+
+data_temp <- read.csv(unzip(dl, files = "conjunto_de_datos/conjunto_de_datos_defunciones_generales_2017.CSV")) %>% 
+  select(cols)
+
+data <- rbind(data, data_temp)
+#------------------------------------------ 2018 ------------------------------------------
+download.file("https://www.inegi.org.mx/contenidos/programas/mortalidad/datosabiertos/defunciones/2018/conjunto_de_datos_defunciones_registradas_2018_csv.zip", dl)
+
+data_temp <- read.csv(unzip(dl, files = "conjunto_de_datos/conjunto_de_datos_defunciones_registradas_2018.csv")) %>% 
+  select(cols)
+
+data <- rbind(data, data_temp)
+```
+
+## **Data Preparation**
+
+It has to be considered that this data contains all the deaths confirmed in Mexico, natural and murders; it is needed to filter just the murder cases. The column "lista_mex" has the type of death, being 55 the equal to murder. The number of murders can be obtained the number of rows after the selection of cases:
+
+```{r}
+data <- data %>% filter(lista_mex==55)
+nrow(data)
+```
+
+However, there is a lot of data that has unknown values for relation between killer and victim, to have an accurate analysis, it is only taken into consideration values different from 88, the code for unknown.
+
+The number of rows is displayed as well.
+
+```{r}
+data <- data %>% filter(par_agre<88)
+nrow(data)
+```
+
+Notice that "complete data" is only about 1% of the whole data set, which indicates a lack of systematic follow up to murders.
+
+At this point, the data set, only has "coded" information, each column has a file where the data frame has been coded. It is need a dictionary to open the different files to have the data in one single data frame. The dictionary is in the same zip file downloaded.
+
+```{r}
+dictionary <- read.csv(unzip(dl, files = "diccionario_de_datos/diccionario_datos_defunciones_registradas_2018.csv"))
+
+values<-sapply(cols, function(col_name){
+  values<-dictionary$CATÁLOGO[which(dictionary$NEMÓNICO==col_name)]
+  values<-paste(values,".csv", sep="")
+  values<-str_replace_all(values, fixed(" "), "")
+  return(values)
+})
+
+values<-as.vector(values)
+```
+
+Once the files that are needed to fill the table are known, each variable has different considerations.
+
+## **Data Cleaning**
+
+In this section, it is shown how each variable is manipulated to fit our data frame. Almost all files with the coded information have 2 columns:
+  
+* CVE = The code of the variable in the main data set.
+* Description = The values to fit in the main data set. 
+
+The Description column is joined to the data set and then renamed to the original column name.
+
+In the case of the state where it happened, we have 3 columns, as in the same table is also the community in that state. It is taken only the rows that contain a state information and move it to the data frame.
+
+```{r}
+new_column<-read.csv(unzip(dl, files = paste("catalogos/",values[1], sep="")))
+new_column<-new_column %>% rename(ent_ocurr=cve_ent) %>% mutate_if(is.factor, as.character) %>% filter(cve_mun==0)
+
+data <- left_join(data, new_column) %>% select(-ent_ocurr, -cve_mun, -cve_loc)
+
+```
+
+Cause of death has the place where it happened in the same string, we use REGEX to filter different places into just the cause.
+```{r, echo= FALSE}
+new_column<-read.csv(unzip(dl, files = paste("catalogos/",values[2], sep="")))
+new_column<-new_column %>% rename(causa_def=CVE)
+new_column$DESCRIP<-as.character(new_column$DESCRIP)
+new_column$DESCRIP<-str_replace_all(new_column$DESCRIP, fixed(" "), "")
+
+data <- left_join(data, new_column) %>% select(-causa_def) %>% rename(causa_def=DESCRIP)
+```
+Here is one example:
+
+```{r}
+data$causa_def<-str_replace_all(data$causa_def, "^Agresióncondisparodearmacorta\\D+" , "Disparo de arma corta")
+```
+```{r, echo= FALSE}
+data$causa_def<-str_replace_all(data$causa_def, "^Agresióncondisparodearmacorta\\D+" , "Disparo de arma corta")
+data$causa_def<-str_replace_all(data$causa_def, "^Agresióncondisparodeotrasarmasdefuego\\D+" , "Disparo de otras armas de fuego")
+data$causa_def<-str_replace_all(data$causa_def, "^Agresióncondisparoderifle,escopetayarmalarga\\D+" , "Disparo de arma larga")
+data$causa_def<-str_replace_all(data$causa_def, "^Agresiónconfuerzacorporal\\D+" , "Fuerza corporal")
+data$causa_def<-str_replace_all(data$causa_def, "^Agresióncongasesyvapores\\D+" , "Agresión con humo, fuego y llamas")
+data$causa_def<-str_replace_all(data$causa_def, "^Agresiónconhumo,fuegoyllamas\\D+" , "Agresión con humo, fuego y llamas")
+data$causa_def<-str_replace_all(data$causa_def, "^Agresiónconobjetocortante\\D+" , "Agresión con objeto cortante")
+data$causa_def<-str_replace_all(data$causa_def, "^Agresiónconobjetoromoosinfilo\\D+" , "Agresión con objeto romo o sin filo")
+data$causa_def<-str_replace_all(data$causa_def, "^Agresiónconplaguicidas\\D+" , "Agresión con productos químicos")
+data$causa_def<-str_replace_all(data$causa_def, "^Agresiónconproductosquímicos\\D+" , "Agresión con productos químicos")
+data$causa_def<-str_replace_all(data$causa_def, "^Agresiónporahogamientoysumersión\\D+" , "Ahogamiento y sumersión")
+data$causa_def<-str_replace_all(data$causa_def, "^Agresiónporahorcamiento,estrangulamientoysofocación\\D+" , "Ahorcamiento, estrangulamiento y sofocación")
+data$causa_def<-str_replace_all(data$causa_def, "^Agresiónporempujarocolocaralavíctimadelantedeobjetoenmovimiento\\D+" , "Agresión por colocar a la víctima delante de objeto en movimiento")
+data$causa_def<-str_replace_all(data$causa_def, "^Agresiónporempujóndesdeunlugarelevado\\D+" , "Empujón desde un lugar elevado")
+data$causa_def<-str_replace_all(data$causa_def, "^Agresiónpormediosnoespecificados\\D+" , "Medios no especificados")
+data$causa_def<-str_replace_all(data$causa_def, "^Agresiónporotrosmediosespecificados\\D+" , "Medios no especificados")
+data$causa_def<-str_replace_all(data$causa_def, "^Negligenciayabandono\\D+", "Negligencia y abandono")
+data$causa_def<-str_replace_all(data$causa_def, "^Agresiónsexualconfuerzacorporal\\D+", "Agresión sexual con fuerza corporal")
+data$causa_def<-str_replace_all(data$causa_def, "^Otrossíndromesdemaltrato\\D+", "Otros síndromes de maltrato")
+
+#----------------------------------------- LISTA_MEX --------------------------------------------
+new_column<-read.csv(unzip(dl, files = paste("catalogos/",values[3], sep="")))
+new_column<-new_column %>% rename(lista_mex=CVE)
+new_column$DESCRIP<-as.character(new_column$DESCRIP)
+
+data <- left_join(data, new_column, by="lista_mex") %>% select(-lista_mex) %>% rename(lista_mex=DESCRIP)
+#----------------------------------------- SEXO --------------------------------------------
+new_column<-read.csv(unzip(dl, files = paste("catalogos/",values[4], sep="")))
+new_column<-new_column %>% rename(sexo=CVE)
+
+new_column$DESCRIP<-as.character(new_column$DESCRIP)
+new_column$DESCRIP<-str_replace_all(new_column$DESCRIP, fixed(" "), "")
+
+
+data <- left_join(data, new_column) %>% select(-sexo) %>% rename(sexo=DESCRIP)
+```
+
+Age has special coding, with a number predeceasing the actual value, being:
+  
+* 1 - hours
+* 2 - days
+* 3 - months
+* 4 - years
+
+For computation, we take all 1, 2, and 3 as less than one year and remove all unknown values for year
+
+```{r}
+data$edad<-str_replace_all(data$edad, "^[1-3]\\d*", "0")
+data$edad<-str_replace_all(data$edad, "^[4]", "")
+data$edad<-as.numeric(data$edad)
+data <- data %>% filter(edad < 998)
+```
+
+For date, remove unknown values
+```{r}
+data <- data %>% filter(dia_ocurr < 99)
+
+new_column<-read.csv(unzip(dl, files = paste("catalogos/",values[7], sep="")))
+new_column<-new_column %>% rename(mes_ocurr=CVE)
+
+data <- left_join(data, new_column) %>% select(-mes_ocurr) %>% rename(mes_ocurr=DESCRIP)
+
+data <- data %>% filter(anio_ocur < 9999)
+```
+
+```{r, echo= FALSE}
+#-------------------------------------- ESTADO CIVIL ----------------------------------------------
+new_column<-read.csv(unzip(dl, files = paste("catalogos/",values[9], sep="")))
+new_column<-new_column %>% rename(edo_civil=CVE)
+
+data <- left_join(data, new_column) %>% select(-edo_civil) %>% rename(edo_civil=DESCRIP)
+#-------------------------------------- LUGAR ----------------------------------------------
+new_column<-read.csv(unzip(dl, files = paste("catalogos/",values[10], sep="")))
+new_column<-new_column %>% rename(lugar_ocur=CVE)
+
+data <- left_join(data, new_column) %>% select(-lugar_ocur) %>% rename(lugar_ocur=DESCRIP)
+#-------------------------------------- VIOLENCIA ----------------------------------------------
+new_column<-read.csv(unzip(dl, files = paste("catalogos/",values[11], sep="")))
+new_column<-new_column %>% rename(vio_fami=CVE)
+
+data <- left_join(data, new_column) %>% select(-vio_fami) %>% rename(vio_fami=DESCRIP)
+#-------------------------------------- ESCOLARIDAD ----------------------------------------------
+new_column<-read.csv(unzip(dl, files = paste("catalogos/",values[12], sep="")))
+new_column<-new_column %>% rename(escolarida=CVE)
+
+data <- left_join(data, new_column) %>% select(-escolarida) %>% rename(escolaridad=DESCRIP)
+```
+
+For relationship, we add a column based on the sex of the aggressor, and for unknown or unrelated we label as "Not applies". The original data has 2 similar values, does not applies and unrelated, because of its similarity, they are merged into one single variable. Notice that "unknown" is not modified.
+
+```{r}
+new_column<-read.csv(unzip(dl, files = paste("catalogos/",values[13], sep="")))
+new_column<-new_column %>% rename(par_agre=CVE)
+new_column$DESCRIP<-as.character(new_column$DESCRIP)
+new_column$DESCRIP<-str_replace_all(new_column$DESCRIP, fixed(" "), "")
+
+sexo_agresor<-c("Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer", "Hombre",
+                "Mujer",  "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer",
+                "Hombre", "Mujer",  "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer", "Hombre",
+                "Mujer",  "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer",
+                "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer", "Hombre", "Mujer", "No especificado",
+                "No especificado", "No especificado", "No especificado", "No especificado", "Hombre", "Mujer", "No especificado",
+                "No especificado", "No especificado", "No aplica", "No aplica")
+
+new_column <- cbind(new_column, sexo_agresor)
+
+data$par_agre<-replace(data$par_agre, data$par_agre==72, 71)
+data <- left_join(data, new_column) %>% select(-par_agre) %>% rename(par_agre=DESCRIP)
+```
+
+Finally all columns are converted into factors, as the caret package will be used.
+
+```{r echo=FALSE}
+data <- data %>% select(-dia_ocurr, -lista_mex, -mes_ocurr)
+
+data$edad <- as.factor(data$edad)
+data$anio_ocur <- as.factor(data$anio_ocur)
+data$nom_loc <- as.factor(data$nom_loc)
+data$causa_def <- as.factor(data$causa_def)
+data$sexo <- as.factor(data$sexo)
+data$edo_civil <- as.factor(data$edo_civil)
+data$lugar_ocur <- as.factor(data$lugar_ocur)
+data$vio_fami <- as.factor(data$vio_fami)
+data$escolaridad <- as.factor(data$escolaridad)
+data$par_agre <- as.factor(data$par_agre)
+data$sexo_agresor <- as.character(data$sexo_agresor)
+data$sexo_agresor <- as.factor(data$sexo_agresor)
+```
+
+## **Exploratory Data Analysis**
+First, the evolution of available data for murders per sex with the parameters we need is presented. (Men = Hombre, Women = Mujer in spanish):
+
+```{r echo=FALSE, results='asis'}
+library(knitr)
+murder_men<-data %>% filter(anio_ocur==2015 | anio_ocur==2016 | anio_ocur==2017 | anio_ocur==2018) %>% 
+  filter(sexo=="Hombre") %>% group_by(Year=anio_ocur) %>% summarise(Number=n())
+
+kable(murder_men, caption = "Murders per year for men", align="cc")
+```
+
+```{r echo=FALSE, results='asis'}
+murder_women<-data %>% filter(anio_ocur==2015 | anio_ocur==2016 | anio_ocur==2017 | anio_ocur==2018) %>% 
+  filter(sexo=="Mujer") %>% group_by(Year=anio_ocur) %>% summarise(Number=n())
+
+kable(murder_women, caption = "Murders per year for women", align="cc")
+```
+
+\newpage
+Next, the difference between the gender of the aggressor for each gender:
+
+```{r echo=FALSE, fig.align="center"}
+x<-data %>% filter(sexo == "Mujer") %>%  group_by(sexo_agresor) %>% summarise(total=n())
+y<-data %>% filter(sexo == "Hombre") %>%  group_by(sexo_agresor) %>% summarise(total=n())
+data %>% ggplot(aes(sexo)) + geom_bar(aes(fill=sexo_agresor)) + ggtitle("Killer's sex") +
+  labs(y = "Total murders", x="Victim's Sex", fill= "Killer's sex") +
+  scale_fill_manual("Killer's sex", values = c("Hombre" = "#56B4E9", "Mujer" = "#CC79A7", "No especificado" = "#009E73")) +
+  theme(text = element_text(size=10), plot.title = element_text(hjust = 0.5))
+```
+
+\newpage
+Let's separate the graph only for women. To have a better understanding of the data, the percentage is added manually:
+
+```{r echo=FALSE, fig.align="center"}
+data %>% filter(sexo == "Mujer") %>%  ggplot(aes(sexo)) + geom_bar(aes(fill=sexo_agresor)) + 
+  ggtitle("Killer's sex for women") +
+  labs(y= "Total murders", x="Sex", fill= "Killer's sex") +
+  annotate("text", label = paste(format(x$total[3]*100/sum(x$total), digits = 4),"%", sep = ""), x = 1, y = 15, size = 4) +
+  annotate("text", label = paste(format(x$total[2]*100/sum(x$total), digits=3),"%", sep = ""), x = 1, y = 150, size = 4) +
+  annotate("text", label = paste(format(x$total[1]*100/sum(x$total), digits=4),"0%", sep = ""), x = 1, y = 180, size = 4) +
+  scale_fill_manual("Killer's sex", values = c("Hombre" = "#56B4E9", "Mujer" = "#CC79A7", "No especificado" = "#009E73")) +
+  theme(text = element_text(size=10), plot.title = element_text(hjust = 0.5))
+```
+
+\newpage
+The same procedure is applied to the graph only for men, adding in the percentage in the graph:
+
+```{r echo=FALSE, fig.align="center"}
+data %>% filter(sexo == "Hombre") %>% ggplot(aes(sexo)) + geom_bar(aes(fill=sexo_agresor)) + 
+  ggtitle("Killer's sex for men") +
+  labs(y = "Total murders", x = "Sex", fill = "Killer's sex") +
+  annotate("text", label = paste(format(y$total[3]*100/sum(y$total), digits = 4),"%", sep = ""), x = 1, y = 35, size = 4) +
+  annotate("text", label = paste(format(y$total[2]*100/sum(y$total), digits=3),"%", sep = ""), x = 1, y = 1125, size = 4) +
+  annotate("text", label = paste(format(y$total[1]*100/sum(y$total), digits=4),"%", sep = ""), x = 1, y = 1200, size = 4) +
+  scale_fill_manual("Killer's sex", values = c("Hombre" = "#56B4E9", "Mujer" = "#CC79A7", "No especificado" = "#009E73")) +
+  theme(text = element_text(size=10), plot.title = element_text(hjust = 0.5))
+```
+
+From these graphs, a significant difference between both, regarding the proportions of the attacker's sex, is evidenced.
+
+\newpage
+Now, let's explore the relation between the killer with the victim, taking a look first only for women:
+
+```{r echo=FALSE, fig.align="center"}
+data %>% filter(sexo == "Mujer") %>% group_by(par_agre) %>% summarise(num = n()) %>% arrange(desc(num)) %>% top_n(10) %>%
+  ggplot(aes(x=reorder(par_agre, -num), y=num)) + geom_bar(stat="identity", fill="#C3D7A4", color="#52854C") + 
+  ggtitle("Relationship between murderer and female victim") +
+  labs(y = "Total murders", x="Relationship") + theme(axis.text.x = element_text(angle = 90))+
+  theme(text = element_text(size=10), plot.title = element_text(hjust = 0.5))
+```
+
+\newpage
+And now for male victim:
+
+```{r echo=FALSE , fig.align="center"}
+data %>% filter(sexo == "Hombre") %>% group_by(par_agre) %>% summarise(num = n()) %>% arrange(desc(num)) %>% top_n(10) %>%
+  ggplot(aes(x=reorder(par_agre, -num), y=num)) + geom_bar(stat="identity", fill="#C3D7A4", color="#52854C") + 
+  ggtitle("Relationship between murderer and male victim") +
+  labs(y = "Total murders", x="Relationship") + theme(axis.text.x = element_text(angle = 90))+
+  theme(text = element_text(size=10), plot.title = element_text(hjust = 0.5))
+```
+
+Notice that for both genders, the killer had no relationship with the victim (Sin parentesco). 
+
+\newpage
+To have a better understanding murders between known individuals, let's filter the unrelated murderers for men:
+
+```{r echo=FALSE, fig.align="center"}
+data %>% filter(sexo == "Hombre") %>% filter(par_agre != "Sinparentesco") %>% group_by(par_agre) %>% summarise(num = n()) %>% arrange(desc(num)) %>% top_n(10) %>%
+  ggplot(aes(x=reorder(par_agre, -num), y=num)) + geom_bar(stat="identity", fill="#C3D7A4", color="#52854C") + 
+  ggtitle("Relationship between murderer and male victim\n for known people") +
+  labs(y = "Total murders", x="Relationship") + theme(axis.text.x = element_text(angle = 90))+
+  theme(text = element_text(size=10), plot.title = element_text(hjust = 0.5))
+```
+
+Observe that almost all killers for men in this graph, can be considered to have a "blood" relationship (Brother, Cousin, Acquaintance, Father, Brother-in-law, Nephew, Uncle, Neighbor, Son, Mother in the same order of the graph), rather than through partnership as shown in the women's graph (Partner, Husband, Son, Ex-husband, Mother, Father, Uncle, Boyfriend, Girlfriend, Brother, Grandson).
+
+Finally, the exploration of how they died, making the plots, again, for women and men:
+
+\newpage
+Causes of death for women:
+```{r echo=FALSE, fig.align="center"}
+data %>% filter(sexo == "Mujer") %>% group_by(causa_def) %>% summarise(num = n()) %>% arrange(desc(num)) %>% top_n(10) %>%
+  ggplot(aes(x=reorder(causa_def, -num), y=num)) + geom_bar(stat="identity", fill="#4E84C4", color="#0072B2") + 
+  ggtitle("Cause of death for female victim") +   labs(y = "Total murders", x="Cause of death") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + theme(text = element_text(size=10), plot.title = element_text(hjust = 0.5))
+```
+
+\newpage
+Causes of death for men:
+
+```{r echo= FALSE, fig.align="center"}
+data %>% filter(sexo == "Hombre") %>% group_by(causa_def) %>% summarise(num = n()) %>% arrange(desc(num)) %>% top_n(10) %>%
+  ggplot(aes(x=reorder(causa_def, -num), y=num)) + geom_bar(stat="identity", fill="#4E84C4", color="#0072B2") +
+  ggtitle("Cause of death for male victim") +   labs(y = "Total murders", x="Cause of death") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  theme(text = element_text(size=10), plot.title = element_text(hjust = 0.5))
+```
+
+It can be observed that in the top 2 causes, both, woman and men, have been killed by a gun (armas de fuego) and sharp object aggressions (agresión con objetos cortantes). But the difference in the amount of murders by choking (Ahorcamiento, estrangulación y sofocación) between both genders is remarkable.
+
+Finally, the last 2 graphs are wrapped in one chart, keeping only the cases where the number is bigger than 10:
+
+For women:
+```{r echo=FALSE}
+par_caus_m<-data %>% filter(sexo == "Mujer") %>% group_by(Relationship=par_agre, Cause=causa_def) %>% summarise(Number = n()) %>% filter(Number>10) %>% arrange(desc(Number))
+
+kable(par_caus_m, caption = "Relation between murderer and cause of death", align="ccc")
+```
+
+For men:
+
+```{r echo=FALSE}
+par_caus_h<-data %>% filter(sexo == "Hombre") %>% group_by(Relationship=par_agre, Cause=causa_def) %>% summarise(Number = n()) %>% filter(Number>10) %>% arrange(desc(Number))
+
+kable(par_caus_h, caption = "Relation between murderer and cause of death", align="ccc")
+```
+
+It has been pointed in the data exploration that there are similarities that both victim's genders share, but also some significant differences that, knowing the conditions of the death, we can use Machine Learning algorithms to predict the victim's sex.
+
+# **Models**
+
+The caret package will be used to test different Machine Learning models, compare them and get the best approach.
+
+First, it is need to separate the data in 80% train set and 20% test set
+
+```{r}
+set.seed(1, sample.kind="Rounding")
+index <- createDataPartition(y = data$sexo, times = 1, p = 0.2, list = FALSE)
+train_set <- data[-index,]
+temp <- data[index,]
+
+validation <- temp %>% 
+  semi_join(train_set, by = "edad") %>%
+  semi_join(train_set, by = "anio_ocur") %>%
+  semi_join(train_set, by = "causa_def")
+
+removed <- anti_join(temp, validation)
+train_set <- rbind(train_set, removed)
+
+rm(temp, removed, index)
+```
+
+Here is presented again the predictors on which the sex of the victim will be calculated, the columns that we selected in the beginning, which included:
+  
+* State where the murder occurred
+* Cause of death
+* Classification of death
+* Victim's sex
+* Age
+* Day occurred
+* Month occurred
+* Year occurred
+* Civil status
+* Place where it happened
+* Family violence
+* Scholarship
+* Relationship with aggressor
+
+
+The first and most basic model, is to predict predict Male for all, as we saw the number of men killed are greater than women. This value will be used as baseline to compare the results of each model.
+
+```{r}
+base<-mean("Hombre"==validation$sexo)
+```
+
+A table to store and compare the results the results is constructed:
+
+```{r, echo=FALSE}
+results<-tribble(~Method, ~Accuracy,
+        "All Men", base)
+
+kable(results, caption = "Model used and result", align="cc")
+```
+
+Classification And Regression Trees (CART) model:
+```{r}
+train_CART <- train(sexo ~ .,
+                    method = "rpart",
+                    tuneGrid = data.frame(cp = seq(0, 0.05, 0.002)),
+                    data = train_set)
+
+rpart_preds <- predict(train_CART, validation)
+CART <- mean(rpart_preds == validation$sexo)
+```
+
+The decition tree for this model:
+
+```{r echo=FALSE}
+plot(train_CART$finalModel, margin = 0.1)
+text(train_CART$finalModel)
+```
+
+Observe that the significant differences found in the data exploratory section, agree with the results of the CART model, being aggressor's gender and relation with the victim the variables used in the model.
+
+The results binded to the comparative table.
+
+```{r echo=FALSE}
+results<-tribble(~Method, ~Accuracy,
+        "All Men", base,
+        "Decisions Tree", CART)
+
+kable(results, caption = "Model used and result", align="cc")
+```
+
+The caret package has other method that has not previously tested, CART 1SE:
+```{r}
+train_rpart <- train(sexo ~ .,
+                     data = train_set,
+                     method = "rpart1SE")
+
+rpart_preds <- predict(train_rpart, validation)
+CART1SE <- mean(rpart_preds == validation$sexo)
+```
+
+The decition tree:
+
+```{r echo=FALSE}
+plot(train_rpart$finalModel, margin = 0.1)
+text(train_rpart$finalModel)
+```
+
+The results table updated:
+ 
+```{r echo=FALSE}
+results<-tribble(~Method, ~Accuracy,
+        "All Men", base,
+        "Decision Tree", CART,
+        "Decision Tree 1SE", CART1SE)
+
+kable(results, caption = "Model used and result", align="cc")
+```
+
+Notice that this method does not need a tuning parameter and has the same result for the first method. This can be helpful in case our choices for tuning does not include the best fit.
+
+The KNN model:
+```{r}
+train_knn <- train(sexo ~ .,
+                   method = "knn",
+                   data = train_set,
+                   tuneGrid = data.frame(k = seq(3, 51, 2)),
+                   trControl = trainControl(method = "cv", number = 10, p = 0.9))
+
+knn_preds <- predict(train_knn, validation)
+knn <- mean(knn_preds == validation$sexo)
+```
+
+The updated chart:
+
+```{r echo=FALSE}
+results<-tribble(~Method, ~Accuracy,
+        "All Men", base,
+        "Decision Tree", CART,
+        "Decision Tree 1SE", CART1SE,
+        "KNN", knn)
+
+kable(results, caption = "Model used and result", align="cc")
+```
+
+For the GLM model:
+```{r}
+train_glm <- train(sexo ~ ., 
+                   method = "glm",
+                   data = train_set)
+
+glm_preds <- predict(train_glm, validation)
+GLM<-mean(glm_preds == validation$sexo)
+```
+
+The updated table:
+
+```{r echo=FALSE}
+results<-tribble(~Method, ~Accuracy,
+        "All Men", base,
+        "Decision Tree", CART,
+        "Decision Tree 1SE", CART1SE,
+        "KNN", knn,
+        "GLM", GLM)
+
+kable(results, caption = "Model used and result", align="cc")
+```
+
+Finally, Random Forest model:
+```{r}
+train_rf <- train(sexo ~ .,
+                  data = train_set,
+                  method = "rf",
+                  ntree = 100,
+                  tuneGrid = data.frame(mtry = seq(1:7)))
+
+rf_preds <- predict(train_rf, validation)
+RF<-mean(rf_preds == validation$sexo)
+```
+
+The table with all results:
+
+```{r echo=FALSE}
+results<-tribble(~Method, ~Accuracy,
+        "All Men", base,
+        "Decision Tree", CART,
+        "Decision Tree 1SE", CART1SE,
+        "KNN", knn,
+        "GLM", GLM,
+        "Random Forest", RF)
+
+kable(results, caption = "Model used and result", align="cc")
+```
+
+Let's see the Variable Importance for the model with greater accuracy, the Random Forest Model:
+
+```{r}
+varImp(train_rf)
+```
+
+Once again, observe that the main differences found in the graphs of exploratory data section, are the main variables used in the models.
+
+It can be noticed that a variable that hadn't been explored is part of the final model, the place where the murder occurred. 
+
+The following plots show the data separated per gender.
+
+```{r echo=FALSE}
+data %>% filter(sexo == "Mujer") %>% group_by(lugar_ocur) %>% summarise(num = n()) %>% arrange(desc(num)) %>% top_n(10) %>%
+  ggplot(aes(x=reorder(lugar_ocur, -num), y=num)) + geom_bar(stat="identity", fill="#E69F00", color="#C4961A") + 
+  ggtitle("Place of death for female victim") +   labs(y = "Total murders", x="Place of death") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + theme(text = element_text(size=15), plot.title = element_text(hjust = 0.5))
+```
+
+```{r echo=FALSE}
+data %>% filter(sexo == "Hombre") %>% group_by(lugar_ocur) %>% summarise(num = n()) %>% arrange(desc(num)) %>% top_n(10) %>%
+  ggplot(aes(x=reorder(lugar_ocur, -num), y=num)) + geom_bar(stat="identity", fill="#E69F00", color="#C4961A") +
+  ggtitle("Place of death for male victim") +   labs(y = "Total murders", x="Place of death") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  theme(text = element_text(size=15), plot.title = element_text(hjust = 0.5))
+
+```
+There is a remarkable difference in the place where the murders happen. Women are more likely to be killed in their own home (Vivienda particular), rather than men, that die more frequently on the street (Vía pública).
+
+# **Results**
+The final result chart presented:
+
+```{r echo=FALSE}
+results<-tribble(~Method, ~Accuracy,
+        "All Men", base,
+        "Decision Tree", CART,
+        "Decision Tree 1SE", CART1SE,
+        "KNN", knn,
+        "GLM", GLM,
+        "Random Forest", RF)
+
+kable(results, caption = "Model used and result", align="cc")
+```
+
+
+# **Conclusion**
+The caret package can handle different Machine Learning methods, one of the many advantages is that the output will be consistent across all of them. In this way, it can be used to test various and then pick the best without knowing which one is it, just coding. It has also improved previous methods included in the same package.
+
+Limitations are also presented by the data itself. Almost 1% from all the data has the complete information to correctly classify it and use it in the  analysis.
+
+It has been proved that there are significant differences on how men and women are killed. While the number of killed men is higher than killed women, the circumstances are different. Each case has to be appointed with their pertinent solutions. While some need attention of public defense and systematic intervention to insecurity, others need different kind of solutions.
+
+## **Future work**
+The train set was built separating the data obtained from last 4 years. Once the 2019 results are available, the models can be tested using the data obtained in the present work as the train set and, after performing data cleaning, use the coming years as test set.
+
+# **References**
+[1] https://rafalab.github.io/dsbook/
+
+[2] https://topepo.github.io/caret/train-models-by-tag.html#tree-based-model
+
+[3] https://www.inegi.org.mx/temas/mortalidad/
+
+[4] https://www.theguardian.com/world/2018/jul/23/mexico-crime-homicides-violence-up-report
+
+[5] https://www.csis.org/analysis/femicides-mexico-impunity-and-protests
+
+[6] https://www.eluniversal.com.mx/english/what-femicide
